@@ -65,6 +65,10 @@ app.post('/api/lookup', async (req, res) => {
       ).then((r) => r.json());
     }
 
+    if (data.totalItems > 0) {
+      const v = data.items[0].volumeInfo;
+      console.log('Books result:', JSON.stringify({ title: v.title, subtitle: v.subtitle, ids: v.industryIdentifiers }));
+    }
     res.json(data);
   } catch (err) {
     console.error('Books lookup error:', err.message);
@@ -78,6 +82,8 @@ app.post('/api/lookup', async (req, res) => {
 app.post('/api/ebay-price', async (req, res) => {
   const { query } = req.body;
   if (!query) return res.status(400).json({ error: 'query required' });
+
+  console.log('eBay query:', query);
 
   try {
     const token = await getEbayToken();

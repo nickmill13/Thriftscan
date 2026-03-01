@@ -47,7 +47,7 @@ async function getEbayToken() {
 }
 
 // ================================================================
-// POST /api/lookup — Google Books by barcode/ISBN
+// POST /api/lookup — Google Books + Open Library for specific titles
 // ================================================================
 app.post('/api/lookup', async (req, res) => {
   const { barcode } = req.body;
@@ -65,10 +65,35 @@ app.post('/api/lookup', async (req, res) => {
       ).then((r) => r.json());
     }
 
+    // If Google Books found something but has no subtitle, try Open Library for a more
+    // specific title (e.g. "The Walking Dead" → "The Walking Dead Compendium, Vol. 1")
     if (data.totalItems > 0) {
-      const v = data.items[0].volumeInfo;
-      console.log('Books result:', JSON.stringify({ title: v.title, subtitle: v.subtitle, ids: v.industryIdentifiers }));
+      const vol = data.items[0].volumeInfo;
+      const isIsbn13 = /^97[89]\d{10}$/.test(barcode);
+
+      if (!vol.subtitle && isIsbn13) {
+        try {
+          const olRes = await fetch(
+            `https://openlibrary.org/api/books?bibkeys=ISBN:${barcode}&format=json&jscope=data`
+          ).then((r) => r.json());
+          const olBook = olRes[`ISBN:${barcode}`];
+
+          if (olBook?.title) {
+            console.log('Open Library:', olBook.title, '|', olBook.subtitle || '(no subtitle)');
+            // Use Open Library title if it's more specific than Google Books
+            if (olBook.title.length > vol.title.length) {
+              vol.title = olBook.title;
+            }
+            if (olBook.subtitle) vol.subtitle = olBook.subtitle;
+          }
+        } catch (e) {
+          // Silent — Google Books data is still usable
+        }
+      }
+
+      console.log('Final title:', vol.title, '|', vol.subtitle || '(no subtitle)');
     }
+
     res.json(data);
   } catch (err) {
     console.error('Books lookup error:', err.message);
@@ -77,49 +102,39 @@ app.post('/api/lookup', async (req, res) => {
 });
 
 // ================================================================
-// POST /api/ebay-price — eBay Browse API (active used listings)
+// POST /api/ebay-price — eBay Browse API keyword search (active used listings)
 // ================================================================
 app.post('/api/ebay-price', async (req, res) => {
-  const { query, isbn } = req.body;
+  const { query } = req.body;
   if (!query) return res.status(400).json({ error: 'query required' });
 
-  const CONDITIONS = 'conditions:{USED|VERY_GOOD|GOOD|ACCEPTABLE|LIKE_NEW},buyingOptions:{FIXED_PRICE|AUCTION}';
+  try {
+    const token = await getEbayToken();
 
-  async function searchEbay(token, overrideParams) {
+    console.log('eBay search:', query);
+
     const params = new URLSearchParams({
-      category_ids: '267',
+      q: query,
+      category_ids: '267', // Books
+      filter: 'conditions:{USED|VERY_GOOD|GOOD|ACCEPTABLE|LIKE_NEW},buyingOptions:{FIXED_PRICE|AUCTION}',
       sort: '-price',
       limit: '10',
-      ...overrideParams,
     });
+
     const r = await fetch(
       `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
       { headers: { Authorization: 'Bearer ' + token, 'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US' } }
     );
-    if (!r.ok) throw new Error(`eBay ${r.status}`);
-    return r.json();
-  }
 
-  try {
-    const token = await getEbayToken();
-    let data;
-
-    // 1. If we have an ISBN, try GTIN filter first — matches exact product in eBay catalog
-    if (isbn) {
-      console.log('eBay GTIN search:', isbn);
-      data = await searchEbay(token, { q: query, filter: `gtin:{${isbn}},${CONDITIONS}` });
-      if ((data.itemSummaries || []).length === 0) {
-        console.log('GTIN returned 0, falling back to keyword:', query);
-        data = await searchEbay(token, { q: query, filter: CONDITIONS });
-      } else {
-        console.log(`GTIN hit: ${data.itemSummaries.length} results`);
-        console.log('GTIN prices:', data.itemSummaries.map(i => `${i.price?.value} ${i.price?.currency} | ${i.title?.slice(0,50)}`));
-      }
-    } else {
-      // 2. No ISBN — keyword search
-      console.log('eBay keyword search:', query);
-      data = await searchEbay(token, { q: query, filter: CONDITIONS });
+    if (!r.ok) {
+      const text = await r.text();
+      console.error(`eBay search failed (${r.status}):`, text);
+      return res.status(r.status).json({ error: 'eBay search failed' });
     }
+
+    const data = await r.json();
+    const prices = (data.itemSummaries || []).map(i => i.price?.value);
+    console.log('eBay prices:', prices);
 
     res.json(data);
   } catch (err) {

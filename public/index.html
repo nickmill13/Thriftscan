@@ -964,22 +964,17 @@ async function fetchEbayPrice(scan) {
   if (!scan.book) return;
   const book = scan.book;
 
-  // Use the raw barcode as the GTIN when it looks like an ISBN-13 (starts 978/979).
-  // Google Books sometimes returns a different edition's ISBN; the physical barcode
-  // is always the most accurate identifier for what's actually in hand.
-  const isIsbn13 = /^97[89]\d{10}$/.test(scan.barcode);
-  const gtinIsbn = isIsbn13 ? scan.barcode : (book.isbn13 || book.isbn10);
-
+  // Build specific title query including subtitle (volume numbers, series info)
   const subtitle = book.subtitle ? ` ${book.subtitle}` : '';
   const fullTitle = `${book.title}${subtitle}`.trim();
   const authorFirst = (book.authors || '').split(',')[0];
-  const query = gtinIsbn ? fullTitle : `${fullTitle} ${authorFirst}`.trim();
+  const query = `${fullTitle} ${authorFirst}`.trim();
 
   try {
     const res = await fetch('/api/ebay-price', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, isbn: gtinIsbn || undefined })
+      body: JSON.stringify({ query })
     });
 
     if (!res.ok) return; // keep heuristic on any server error

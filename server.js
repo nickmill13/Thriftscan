@@ -73,10 +73,9 @@ app.post('/api/lookup', async (req, res) => {
 
       if (!vol.subtitle && isIsbn13) {
         try {
-          const olRes = await fetch(
-            `https://openlibrary.org/api/books?bibkeys=ISBN:${barcode}&format=json&jscope=data`
+          const olBook = await fetch(
+            `https://openlibrary.org/isbn/${barcode}.json`
           ).then((r) => r.json());
-          const olBook = olRes[`ISBN:${barcode}`];
 
           if (olBook?.title) {
             console.log('Open Library:', olBook.title, '|', olBook.subtitle || '(no subtitle)');

@@ -980,6 +980,7 @@ async function fetchEbayPrice(scan) {
     if (!res.ok) return; // keep heuristic on any server error
 
     const data = await res.json();
+    const dataSource = data.source || 'active'; // 'sold' or 'active'
     const items = data.itemSummaries || [];
     if (items.length === 0) return;
 
@@ -1004,11 +1005,12 @@ async function fetchEbayPrice(scan) {
     if (profit >= minProfit * 2) verdict = 'buy';
     else if (profit >= minProfit) verdict = 'maybe';
 
-    const signals = ['📊 eBay Live'];
-    if (soldCount >= 5) signals.push(`${soldCount} listings`);
+    const sourceLabel = dataSource === 'sold' ? '✅ Sold' : '📋 Active';
+    const signals = [sourceLabel];
+    if (soldCount >= 5) signals.push(`${soldCount} sales`);
     if (scan.ebay?.signals) {
       scan.ebay.signals.forEach(s => {
-        if (!s.includes('eBay') && !s.includes('listing')) signals.push(s);
+        if (!s.includes('Sold') && !s.includes('Active') && !s.includes('sales')) signals.push(s);
       });
     }
 
@@ -1023,7 +1025,7 @@ async function fetchEbayPrice(scan) {
       confidence: soldCount >= 5 ? 'high' : 'medium',
       signals,
       verdict,
-      source: 'ebay-api',
+      source: dataSource === 'sold' ? 'ebay-sold' : 'ebay-active',
       listingsFound: soldCount
     };
   } catch (err) {
@@ -1056,7 +1058,7 @@ function renderScanList() {
     let priceHtml = '<div class="ebay-price unknown">—</div><div class="ebay-label">loading</div>';
     if (s.ebay) {
       const col = s.ebay.verdict === 'buy' ? 'var(--green)' : s.ebay.verdict === 'maybe' ? 'var(--yellow)' : 'var(--muted)';
-      const src = s.ebay.source === 'ebay-api' ? 'eBay actual' : 'estimate';
+      const src = s.ebay.source === 'ebay-sold' ? 'sold data' : s.ebay.source === 'ebay-active' ? 'active listings' : 'estimate';
       priceHtml = `<div class="ebay-price" style="color:${col}">$${s.ebay.estimatedPrice}</div><div class="ebay-label">${src}</div>`;
     } else if (s.status === 'not-found') {
       priceHtml = '<div class="ebay-price unknown">?</div><div class="ebay-label">unknown</div>';
@@ -1102,7 +1104,7 @@ function renderEvalList() {
 
   // Recalculate heuristic estimates (but don't overwrite real eBay API data)
   scans.forEach(s => {
-    if (s.status === 'found' && s.book && s.ebay?.source !== 'ebay-api') estimateEbayPrice(s);
+    if (s.status === 'found' && s.book && !s.ebay?.source?.startsWith('ebay-')) estimateEbayPrice(s);
   });
 
   let items = scans.filter(s => s.status === 'found' && s.ebay);
@@ -1165,7 +1167,7 @@ function renderEvalList() {
           <div class="verdict-emoji">${emoji}</div>
           <div class="verdict-text">
             <div class="verdict-word ${e.verdict}">${e.verdict.toUpperCase()}</div>
-            <div class="verdict-sub">${e.confidence} confidence${e.source === 'ebay-api' ? ' · eBay data' : ' · estimate'} · ${isbn.slice(-10)}</div>
+            <div class="verdict-sub">${e.confidence} confidence · ${e.source === 'ebay-sold' ? 'sold prices' : e.source === 'ebay-active' ? 'active listings' : 'estimate'} · ${isbn.slice(-10)}</div>
           </div>
           <div class="eval-profit">
             <div class="eval-profit-num" style="color:${profitColor}">${profitSign}$${e.profit.toFixed(2)}</div>

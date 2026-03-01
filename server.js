@@ -123,14 +123,6 @@ app.post('/api/ebay-price', async (req, res) => {
       ['itemFilter(2).value',     '150'],
       ['itemFilter(2).paramName', 'Currency'],
       ['itemFilter(2).paramValue','USD'],
-      // Exclude new condition (1000) — used condition IDs: 2500 Like New, 2750 Very Good,
-      // 3000 Good, 4000 Acceptable, 7000 Poor
-      ['itemFilter(3).name',         'Condition'],
-      ['itemFilter(3).value(0)',      '2500'],
-      ['itemFilter(3).value(1)',      '2750'],
-      ['itemFilter(3).value(2)',      '3000'],
-      ['itemFilter(3).value(3)',      '4000'],
-      ['itemFilter(3).value(4)',      '7000'],
       ['paginationInput.entriesPerPage', '20'],
       ['sortOrder',               'EndTimeSoonest'],
     ]);
@@ -146,8 +138,14 @@ app.post('/api/ebay-price', async (req, res) => {
 
     const items = data.findCompletedItemsResponse?.[0]?.searchResult?.[0]?.item || [];
 
+    // Filter out new condition (conditionId 1000) — we only want used sold prices
+    const usedItems = items.filter(item => {
+      const conditionId = item.condition?.[0]?.conditionId?.[0];
+      return conditionId !== '1000';
+    });
+
     // Normalize to the same shape the frontend already handles
-    const summaries = items
+    const summaries = usedItems
       .map(item => ({
         title: item.title?.[0] || '',
         price: {
@@ -157,7 +155,7 @@ app.post('/api/ebay-price', async (req, res) => {
       }))
       .filter(item => parseFloat(item.price.value) >= 0.50);
 
-    console.log(`Sold (${summaries.length}):`, summaries.map(i => i.price.value));
+    console.log(`Sold used (${summaries.length}):`, summaries.map(i => i.price.value));
 
     return res.json({ source: 'sold', itemSummaries: summaries });
   } catch (err) {

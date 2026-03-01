@@ -116,9 +116,9 @@ app.post('/api/ebay-price', async (req, res) => {
     const params = new URLSearchParams({
       q: query,
       category_ids: '267', // Books
-      filter: 'conditions:{USED|VERY_GOOD|GOOD|ACCEPTABLE|LIKE_NEW},buyingOptions:{FIXED_PRICE|AUCTION}',
-      sort: '-price',
-      limit: '10',
+      // Price range caps collectibles/rare items; priceCurrency required when using price filter
+      filter: 'price:[0.50..150],priceCurrency:USD,conditions:{USED|VERY_GOOD|GOOD|ACCEPTABLE|LIKE_NEW},buyingOptions:{FIXED_PRICE|AUCTION}',
+      limit: '20', // larger sample for better median
     });
 
     const r = await fetch(

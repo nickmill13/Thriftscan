@@ -80,39 +80,46 @@ app.post('/api/lookup', async (req, res) => {
 // POST /api/ebay-price — eBay Browse API (active used listings)
 // ================================================================
 app.post('/api/ebay-price', async (req, res) => {
-  const { query } = req.body;
+  const { query, isbn } = req.body;
   if (!query) return res.status(400).json({ error: 'query required' });
 
-  console.log('eBay query:', query);
+  const CONDITIONS = 'conditions:{USED|VERY_GOOD|GOOD|ACCEPTABLE|LIKE_NEW},buyingOptions:{FIXED_PRICE|AUCTION}';
+
+  async function searchEbay(token, overrideParams) {
+    const params = new URLSearchParams({
+      category_ids: '267',
+      sort: '-price',
+      limit: '10',
+      ...overrideParams,
+    });
+    const r = await fetch(
+      `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
+      { headers: { Authorization: 'Bearer ' + token, 'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US' } }
+    );
+    if (!r.ok) throw new Error(`eBay ${r.status}`);
+    return r.json();
+  }
 
   try {
     const token = await getEbayToken();
+    let data;
 
-    const params = new URLSearchParams({
-      q: query,
-      category_ids: '267', // Books category
-      filter: 'conditions:{USED|VERY_GOOD|GOOD|ACCEPTABLE|LIKE_NEW},buyingOptions:{FIXED_PRICE|AUCTION}',
-      sort: '-price',
-      limit: '10',
-    });
-
-    const ebayRes = await fetch(
-      `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
-      {
-        headers: {
-          Authorization: 'Bearer ' + token,
-          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
-        },
+    // 1. If we have an ISBN, try GTIN filter first — matches exact product in eBay catalog
+    if (isbn) {
+      console.log('eBay GTIN search:', isbn);
+      data = await searchEbay(token, { q: query, filter: `gtin:{${isbn}},${CONDITIONS}` });
+      if ((data.itemSummaries || []).length === 0) {
+        console.log('GTIN returned 0, falling back to keyword:', query);
+        data = await searchEbay(token, { q: query, filter: CONDITIONS });
+      } else {
+        console.log(`GTIN hit: ${data.itemSummaries.length} results`);
       }
-    );
-
-    if (!ebayRes.ok) {
-      const text = await ebayRes.text();
-      console.error(`eBay search failed (${ebayRes.status}):`, text);
-      return res.status(ebayRes.status).json({ error: 'eBay search failed' });
+    } else {
+      // 2. No ISBN — keyword search
+      console.log('eBay keyword search:', query);
+      data = await searchEbay(token, { q: query, filter: CONDITIONS });
     }
 
-    const data = await ebayRes.json();
     res.json(data);
   } catch (err) {
     if (err.message.includes('not configured')) {

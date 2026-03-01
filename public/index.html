@@ -976,7 +976,7 @@ async function fetchEbayPrice(scan) {
     const res = await fetch('/api/ebay-price', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query })
+      body: JSON.stringify({ query, isbn: isbn || undefined })
     });
 
     if (!res.ok) return; // keep heuristic on any server error

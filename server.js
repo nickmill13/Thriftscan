@@ -130,7 +130,11 @@ app.post('/api/ebay-price', async (req, res) => {
     const r = await fetch(
       `https://svcs.ebay.com/services/search/FindingService/v1?${params}`
     );
-    if (!r.ok) throw new Error(`Finding API HTTP ${r.status}`);
+    if (!r.ok) {
+      const errBody = await r.text();
+      console.error('Finding API error body:', errBody.slice(0, 800));
+      throw new Error(`Finding API HTTP ${r.status}`);
+    }
 
     const data = await r.json();
     const ack = data.findCompletedItemsResponse?.[0]?.ack?.[0];

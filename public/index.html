@@ -1,0 +1,1367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ThriftScan</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: #131313;
+    --surface2: #1a1a1a;
+    --surface3: #222;
+    --border: #2a2a2a;
+    --accent: #c8ff00;
+    --accent-dim: rgba(200,255,0,0.15);
+    --text: #f0f0f0;
+    --muted: #666;
+    --muted2: #444;
+    --green: #00e676;
+    --green-dim: rgba(0,230,118,0.1);
+    --red: #ff3d57;
+    --red-dim: rgba(255,61,87,0.1);
+    --yellow: #ffd740;
+    --yellow-dim: rgba(255,215,64,0.1);
+    --blue: #448aff;
+  }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    display: flex;
+    flex-direction: column;
+    -webkit-text-size-adjust: 100%;
+    position: fixed;
+    width: 100%;
+  }
+
+  /* Scanline texture */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.008) 2px, rgba(255,255,255,0.008) 4px);
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ===== HEADER ===== */
+  header {
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+    z-index: 10;
+  }
+
+  .logo {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.5rem;
+    letter-spacing: 3px;
+    color: var(--accent);
+    text-shadow: 0 0 20px rgba(200,255,0,0.3);
+  }
+  .logo span { color: var(--text); }
+
+  .scan-count {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--accent);
+    letter-spacing: 1px;
+  }
+
+  /* ===== TABS ===== */
+  .tab-bar {
+    display: flex;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .tab {
+    flex: 1;
+    padding: 12px;
+    text-align: center;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1rem;
+    letter-spacing: 3px;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    position: relative;
+  }
+  .tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    background: rgba(200,255,0,0.03);
+  }
+  .tab:active { opacity: 0.7; }
+
+  .tab-badge {
+    position: absolute;
+    top: 6px;
+    right: calc(50% - 40px);
+    background: var(--accent);
+    color: #000;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.55rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 100px;
+    min-width: 18px;
+  }
+
+  /* ===== PANELS ===== */
+  .panel {
+    display: none;
+    flex: 1;
+    overflow: hidden;
+    flex-direction: column;
+  }
+  .panel.active { display: flex; }
+
+  /* ===== SCAN PANEL ===== */
+  .scan-input-area {
+    padding: 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .scan-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  #barcodeInput {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--accent);
+    font-family: 'DM Mono', monospace;
+    font-size: 1.1rem;
+    padding: 14px 14px;
+    outline: none;
+    letter-spacing: 3px;
+    min-width: 0;
+    transition: all 0.2s;
+  }
+  #barcodeInput:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(200,255,0,0.1);
+  }
+  #barcodeInput::placeholder {
+    color: var(--muted2);
+    letter-spacing: 2px;
+  }
+
+  .scan-btn {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 8px;
+    padding: 14px 20px;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.1rem;
+    letter-spacing: 3px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+  .scan-btn:active { transform: scale(0.95); opacity: 0.85; }
+
+  .scan-hint {
+    margin-top: 8px;
+    font-size: 0.68rem;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    letter-spacing: 0.5px;
+  }
+
+  /* Scanned items list */
+  .scan-list {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 8px;
+  }
+
+  .scan-list-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    opacity: 0.3;
+    text-align: center;
+    padding: 40px;
+  }
+
+  .scan-list-empty .big-icon { font-size: 3.5rem; margin-bottom: 16px; filter: grayscale(1); }
+  .scan-list-empty h3 { font-family: 'Bebas Neue', sans-serif; font-size: 1.4rem; letter-spacing: 3px; margin-bottom: 6px; }
+  .scan-list-empty p { font-size: 0.75rem; color: var(--muted); line-height: 1.5; }
+
+  /* Individual scan item */
+  .scan-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 6px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    animation: itemIn 0.25s ease;
+    position: relative;
+    transition: border-color 0.2s;
+  }
+  .scan-item:active { border-color: var(--muted); }
+
+  @keyframes itemIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .scan-item-thumb {
+    width: 48px;
+    height: 64px;
+    border-radius: 4px;
+    background: var(--surface2);
+    flex-shrink: 0;
+    object-fit: cover;
+    border: 1px solid var(--border);
+  }
+
+  .scan-item-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .scan-item-title {
+    font-size: 0.82rem;
+    font-weight: 500;
+    line-height: 1.3;
+    margin-bottom: 2px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .scan-item-author {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .scan-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .scan-item-isbn {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--muted2);
+    letter-spacing: 1px;
+  }
+
+  .scan-item-status {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 1px;
+    padding: 2px 8px;
+    border-radius: 100px;
+  }
+
+  .status-looking { background: var(--accent-dim); color: var(--accent); }
+  .status-found { background: var(--green-dim); color: var(--green); }
+  .status-not-found { background: var(--red-dim); color: var(--red); }
+  .status-loading { background: var(--surface3); color: var(--muted); animation: blink 1s infinite; }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .scan-item-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .ebay-price {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.3rem;
+    letter-spacing: 1px;
+    color: var(--green);
+    line-height: 1;
+  }
+  .ebay-price.unknown { color: var(--muted); font-size: 1rem; }
+
+  .ebay-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.55rem;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .delete-item {
+    background: none;
+    border: none;
+    color: var(--muted2);
+    font-size: 0.9rem;
+    cursor: pointer;
+    padding: 4px;
+    transition: color 0.2s;
+  }
+  .delete-item:active { color: var(--red); }
+
+  /* ===== EVALUATE PANEL ===== */
+  .eval-controls {
+    padding: 12px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .eval-sort {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    padding: 8px 10px;
+    outline: none;
+    flex: 1;
+  }
+
+  .eval-filter {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 6px 12px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: all 0.2s;
+  }
+  .eval-filter.active {
+    background: var(--accent-dim);
+    border-color: rgba(200,255,0,0.3);
+    color: var(--accent);
+  }
+
+  .eval-list {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 8px;
+  }
+
+  /* Evaluate card */
+  .eval-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 8px;
+    animation: itemIn 0.2s ease;
+  }
+
+  .eval-card-top {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .eval-thumb {
+    width: 56px;
+    height: 76px;
+    border-radius: 4px;
+    background: var(--surface2);
+    flex-shrink: 0;
+    object-fit: cover;
+    border: 1px solid var(--border);
+  }
+
+  .eval-info { flex: 1; min-width: 0; }
+
+  .eval-title {
+    font-size: 0.88rem;
+    font-weight: 500;
+    line-height: 1.3;
+    margin-bottom: 2px;
+  }
+
+  .eval-author {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .eval-detail-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .eval-chip {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.58rem;
+    padding: 2px 8px;
+    border-radius: 100px;
+    background: var(--surface2);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    letter-spacing: 0.5px;
+  }
+
+  .eval-pricing {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .eval-price-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 8px;
+    text-align: center;
+  }
+
+  .eval-price-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.5rem;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .eval-price-value {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.2rem;
+    letter-spacing: 1px;
+  }
+
+  .eval-price-sub {
+    font-size: 0.55rem;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  .eval-verdict {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border-radius: 8px;
+    margin-bottom: 10px;
+  }
+  .eval-verdict.buy { background: var(--green-dim); border: 1px solid rgba(0,230,118,0.25); }
+  .eval-verdict.pass { background: var(--red-dim); border: 1px solid rgba(255,61,87,0.25); }
+  .eval-verdict.maybe { background: var(--yellow-dim); border: 1px solid rgba(255,215,64,0.25); }
+
+  .verdict-emoji { font-size: 1.5rem; flex-shrink: 0; }
+  .verdict-text { flex: 1; }
+  .verdict-word {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.3rem;
+    letter-spacing: 3px;
+    line-height: 1;
+  }
+  .verdict-word.buy { color: var(--green); }
+  .verdict-word.pass { color: var(--red); }
+  .verdict-word.maybe { color: var(--yellow); }
+
+  .verdict-sub {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .eval-profit { text-align: right; flex-shrink: 0; }
+  .eval-profit-num {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.5rem;
+    letter-spacing: 1px;
+  }
+  .eval-profit-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.5rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .eval-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .eval-action-btn {
+    flex: 1;
+    padding: 10px;
+    border-radius: 8px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 1px;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--muted);
+    text-align: center;
+    transition: all 0.15s;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .eval-action-btn:active { transform: scale(0.97); }
+  .eval-action-btn.primary {
+    background: var(--accent);
+    color: #000;
+    border-color: var(--accent);
+    font-weight: 500;
+  }
+
+  /* ===== SETTINGS PANEL ===== */
+  .settings-panel-inner {
+    padding: 20px 16px;
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  .settings-group {
+    margin-bottom: 24px;
+  }
+
+  .settings-group h3 {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+
+  .setting-row label { font-size: 0.82rem; }
+
+  .setting-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.8rem;
+    padding: 8px 10px;
+    outline: none;
+    width: 110px;
+  }
+  .setting-input:focus { border-color: var(--accent); }
+
+  .settings-note {
+    font-size: 0.72rem;
+    color: var(--muted);
+    line-height: 1.6;
+    padding: 12px;
+    background: var(--surface2);
+    border-radius: 8px;
+    margin-top: 8px;
+  }
+
+  .danger-btn {
+    background: var(--red-dim);
+    border: 1px solid rgba(255,61,87,0.3);
+    color: var(--red);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 1px;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 8px;
+  }
+
+  /* ===== BOTTOM BAR ===== */
+  .bottom-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .bottom-stat {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+  .bottom-stat strong { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Thrift<span>Scan</span></div>
+  <div class="scan-count" id="scanCount">0 scans</div>
+</header>
+
+<div class="tab-bar">
+  <div class="tab active" id="tabScan" onclick="switchTab('scan')">📱 Scan</div>
+  <div class="tab" id="tabEval" onclick="switchTab('eval')">
+    💰 Evaluate
+    <span class="tab-badge" id="evalBadge" style="display:none">0</span>
+  </div>
+  <div class="tab" id="tabSettings" onclick="switchTab('settings')">⚙️</div>
+</div>
+
+<!-- SCAN PANEL -->
+<div class="panel active" id="panelScan">
+  <div class="scan-input-area">
+    <div class="scan-row">
+      <input type="text" id="barcodeInput" inputmode="numeric" placeholder="Scan barcode..." autocomplete="off" autofocus />
+      <button class="scan-btn" onclick="addScan()">ADD</button>
+    </div>
+    <div class="scan-hint">Scan with Eyoyo or type · items appear instantly · evaluate when done</div>
+  </div>
+  <div class="scan-list" id="scanList">
+    <div class="scan-list-empty" id="scanEmpty">
+      <span class="big-icon">📦</span>
+      <h3>Start Scanning</h3>
+      <p>Point your scanner at barcodes.<br>Items appear here instantly.<br>Switch to 💰 Evaluate when ready.</p>
+    </div>
+  </div>
+</div>
+
+<!-- EVALUATE PANEL -->
+<div class="panel" id="panelEval">
+  <div class="eval-controls">
+    <select class="eval-sort" id="evalSort" onchange="renderEvalList()">
+      <option value="profit-desc">Highest Profit First</option>
+      <option value="profit-asc">Lowest Profit First</option>
+      <option value="price-desc">Highest Price First</option>
+      <option value="newest">Newest Scan First</option>
+    </select>
+    <div class="eval-filter" id="filterBuy" onclick="toggleFilter('buy')">BUY ONLY</div>
+  </div>
+  <div class="eval-list" id="evalList"></div>
+</div>
+
+<!-- SETTINGS PANEL -->
+<div class="panel" id="panelSettings">
+  <div class="settings-panel-inner">
+    <div class="settings-group">
+      <h3>Resale Criteria</h3>
+      <div class="setting-row">
+        <label>Min Profit ($)</label>
+        <input type="number" class="setting-input" id="minProfit" value="5" min="0" />
+      </div>
+      <div class="setting-row">
+        <label>Avg Thrift Price ($)</label>
+        <input type="number" class="setting-input" id="avgThriftPrice" value="3" min="0" step="0.5" />
+      </div>
+    </div>
+    <div class="settings-group">
+      <h3>eBay Fees (auto-calculated)</h3>
+      <div class="settings-note">
+        eBay takes ~13.25% + $0.30 per order for books. Shipping via USPS Media Mail ~$3–5. Factored into profit estimates automatically. Real pricing pulled via server — no keys needed in the app.
+      </div>
+    </div>
+    <div class="settings-group">
+      <h3>AI Analysis</h3>
+      <div class="settings-note">
+        The 🤖 AI button sends book info to the server which calls Claude. Works automatically if the server is configured with an Anthropic API key.
+      </div>
+    </div>
+    <div class="settings-group">
+      <h3>Data</h3>
+      <button class="danger-btn" onclick="clearAllScans()">🗑️ Clear All Scans</button>
+    </div>
+  </div>
+</div>
+
+<div class="bottom-bar">
+  <div class="bottom-stat" id="bottomStat">Ready to scan</div>
+</div>
+
+<script>
+// ================================================================
+// STATE
+// ================================================================
+let scans = [];
+let activeFilter = null;
+
+try { scans = JSON.parse(localStorage.getItem('ts_scans') || '[]'); } catch(e) { scans = []; }
+
+// Load saved settings
+const savedMinProfit = localStorage.getItem('ts_min_profit');
+const savedThriftPrice = localStorage.getItem('ts_thrift_price');
+
+const EBAY_FEE_RATE = 0.1325;
+const EBAY_ORDER_FEE = 0.30;
+const AVG_SHIPPING = 4.00;
+
+// ================================================================
+// TAB SWITCHING
+// ================================================================
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.add('active');
+  document.getElementById('panel' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.add('active');
+  if (tab === 'scan') setTimeout(() => document.getElementById('barcodeInput').focus(), 100);
+  if (tab === 'eval') renderEvalList();
+}
+
+// ================================================================
+// SCANNING — INSTANT, NO API WAIT
+// ================================================================
+const barcodeInput = document.getElementById('barcodeInput');
+
+barcodeInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    e.preventDefault();
+    addScan();
+  }
+});
+
+function addScan() {
+  const barcode = barcodeInput.value.replace(/\s/g, '');
+  if (barcode.length < 6) return;
+  barcodeInput.value = '';
+
+  // Duplicate check
+  if (scans.find(s => s.barcode === barcode)) {
+    const el = document.querySelector(`[data-barcode="${barcode}"]`);
+    if (el) {
+      el.style.borderColor = 'var(--yellow)';
+      el.style.background = 'rgba(255,215,64,0.05)';
+      setTimeout(() => { el.style.borderColor = ''; el.style.background = ''; }, 800);
+    }
+    return;
+  }
+
+  const scan = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    barcode,
+    timestamp: Date.now(),
+    book: null,
+    ebay: null,
+    status: 'looking'
+  };
+
+  scans.unshift(scan);
+  saveScans();
+  renderScanList();
+  updateCounts();
+
+  // Background lookup — doesn't block scanning
+  lookupBook(scan);
+}
+
+// ================================================================
+// BOOK LOOKUP — via server (Google Books, CORS-free)
+// ================================================================
+async function lookupBook(scan) {
+  try {
+    const res = await fetch('/api/lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ barcode: scan.barcode })
+    });
+
+    if (!res.ok) throw new Error(`Lookup failed: ${res.status}`);
+    const data = await res.json();
+
+    if (data.totalItems > 0) {
+      const vol = data.items[0].volumeInfo;
+      const sale = data.items[0].saleInfo || {};
+
+      scan.book = {
+        title: vol.title || 'Unknown Title',
+        subtitle: vol.subtitle || '',
+        authors: (vol.authors || []).join(', ') || 'Unknown',
+        publisher: vol.publisher || '',
+        publishedDate: vol.publishedDate || '',
+        pageCount: vol.pageCount || null,
+        categories: vol.categories || [],
+        thumbnail: (vol.imageLinks?.thumbnail || '').replace('http:', 'https:'),
+        isbn13: getISBN(vol, '13'),
+        isbn10: getISBN(vol, '10'),
+        language: vol.language || 'en',
+        listPrice: sale.listPrice?.amount || null,
+        averageRating: vol.averageRating || null,
+        ratingsCount: vol.ratingsCount || 0
+      };
+      scan.status = 'found';
+      estimateEbayPrice(scan); // heuristic immediately
+    } else {
+      scan.status = 'not-found';
+      scan.book = { title: `Unknown (${scan.barcode})`, authors: '', thumbnail: '', categories: [] };
+    }
+  } catch (err) {
+    console.error('Lookup failed:', err);
+    scan.status = 'not-found';
+    scan.book = { title: `Error (${scan.barcode})`, authors: '', thumbnail: '', categories: [] };
+  }
+
+  saveScans();
+  renderScanList();
+  updateCounts();
+
+  // Fire eBay lookup (non-blocking) — heuristic shows immediately above
+  if (scan.status === 'found') {
+    fetchEbayPrice(scan).then(() => {
+      saveScans();
+      renderScanList();
+      updateCounts();
+    });
+  }
+}
+
+function getISBN(vol, type) {
+  return (vol.industryIdentifiers || []).find(i => i.type === `ISBN_${type}`)?.identifier || '';
+}
+
+// ================================================================
+// EBAY PRICE ESTIMATION (heuristic — instant fallback)
+// ================================================================
+function estimateEbayPrice(scan) {
+  const book = scan.book;
+  if (!book || scan.status !== 'found') return;
+
+  let basePrice = 8;
+  let confidence = 'low';
+  let signals = [];
+
+  if (book.listPrice) {
+    basePrice = Math.round(book.listPrice * 0.35);
+    signals.push(`Retail $${book.listPrice}`);
+    confidence = 'medium';
+  }
+
+  const catStr = (book.categories || []).join(' ').toLowerCase();
+  const titleLower = (book.title + ' ' + (book.subtitle || '')).toLowerCase();
+
+  const isTextbook = catStr.includes('textbook') || catStr.includes('education') ||
+    titleLower.includes('edition') || titleLower.includes('textbook') ||
+    titleLower.includes('introduction to') || titleLower.includes('fundamentals of') ||
+    (book.pageCount > 400 && book.listPrice > 40);
+
+  if (isTextbook) {
+    basePrice = Math.max(basePrice, 15);
+    if (book.listPrice > 60) basePrice = Math.round(book.listPrice * 0.30);
+    if (book.listPrice > 100) basePrice = Math.round(book.listPrice * 0.25);
+    signals.push('📚 Textbook');
+    confidence = 'medium';
+  }
+
+  const isGN = catStr.includes('comic') || catStr.includes('graphic novel') ||
+    catStr.includes('manga') || titleLower.includes('graphic novel') ||
+    titleLower.includes('manga') || titleLower.includes('vol.');
+
+  if (isGN) {
+    basePrice = Math.max(basePrice, 10);
+    if (book.listPrice > 15) basePrice = Math.round(book.listPrice * 0.45);
+    signals.push('🎨 Graphic Novel');
+    confidence = 'medium';
+  }
+
+  if (book.averageRating >= 4.0 && book.ratingsCount > 100) {
+    basePrice = Math.round(basePrice * 1.2);
+    signals.push('⭐ Popular');
+  }
+
+  const isNiche = catStr.includes('medical') || catStr.includes('law') ||
+    catStr.includes('engineering') || catStr.includes('programming') ||
+    catStr.includes('computer') || catStr.includes('science');
+
+  if (isNiche) {
+    basePrice = Math.max(basePrice, 12);
+    signals.push('🔬 Specialty');
+    confidence = 'medium';
+  }
+
+  if (book.language && book.language !== 'en') {
+    basePrice = Math.round(basePrice * 0.6);
+    signals.push('🌐 Non-English');
+  }
+
+  basePrice = Math.max(basePrice, 3);
+
+  const thriftCost = getThriftCost();
+  const ebayFees = Math.round((basePrice * EBAY_FEE_RATE + EBAY_ORDER_FEE) * 100) / 100;
+  const profit = Math.round((basePrice - ebayFees - AVG_SHIPPING - thriftCost) * 100) / 100;
+
+  const minProfit = getMinProfit();
+  let verdict = 'pass';
+  if (profit >= minProfit * 2) verdict = 'buy';
+  else if (profit >= minProfit) verdict = 'maybe';
+
+  scan.ebay = {
+    estimatedPrice: basePrice,
+    low: Math.round(basePrice * 0.65),
+    high: Math.round(basePrice * 1.5),
+    profit,
+    fees: ebayFees,
+    shipping: AVG_SHIPPING,
+    thriftCost,
+    confidence,
+    signals,
+    verdict
+  };
+}
+
+// ================================================================
+// EBAY PRICE — real listings via server
+// ================================================================
+async function fetchEbayPrice(scan) {
+  if (!scan.book) return;
+  const book = scan.book;
+  const isbn = book.isbn13 || book.isbn10;
+  const query = isbn || `${book.title} ${(book.authors || '').split(',')[0]}`.trim();
+
+  try {
+    const res = await fetch('/api/ebay-price', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query })
+    });
+
+    if (!res.ok) return; // keep heuristic on any server error
+
+    const data = await res.json();
+    const items = data.itemSummaries || [];
+    if (items.length === 0) return;
+
+    const prices = items
+      .map(item => parseFloat(item.price?.value || 0))
+      .filter(p => p > 0 && p < 500)
+      .sort((a, b) => a - b);
+
+    if (prices.length === 0) return;
+
+    const median = prices[Math.floor(prices.length / 2)];
+    const low = prices[Math.floor(prices.length * 0.25)] || prices[0];
+    const high = prices[Math.floor(prices.length * 0.75)] || prices[prices.length - 1];
+    const soldCount = items.length;
+
+    const thriftCost = getThriftCost();
+    const ebayFees = Math.round((median * EBAY_FEE_RATE + EBAY_ORDER_FEE) * 100) / 100;
+    const profit = Math.round((median - ebayFees - AVG_SHIPPING - thriftCost) * 100) / 100;
+    const minProfit = getMinProfit();
+
+    let verdict = 'pass';
+    if (profit >= minProfit * 2) verdict = 'buy';
+    else if (profit >= minProfit) verdict = 'maybe';
+
+    const signals = ['📊 eBay Live'];
+    if (soldCount >= 5) signals.push(`${soldCount} listings`);
+    if (scan.ebay?.signals) {
+      scan.ebay.signals.forEach(s => {
+        if (!s.includes('eBay') && !s.includes('listing')) signals.push(s);
+      });
+    }
+
+    scan.ebay = {
+      estimatedPrice: Math.round(median),
+      low: Math.round(low),
+      high: Math.round(high),
+      profit,
+      fees: ebayFees,
+      shipping: AVG_SHIPPING,
+      thriftCost,
+      confidence: soldCount >= 5 ? 'high' : 'medium',
+      signals,
+      verdict,
+      source: 'ebay-api',
+      listingsFound: soldCount
+    };
+  } catch (err) {
+    console.warn('eBay price fetch error:', err);
+    // Keep heuristic — silent fail
+  }
+}
+
+// ================================================================
+// RENDER — SCAN LIST
+// ================================================================
+function renderScanList() {
+  const list = document.getElementById('scanList');
+  const empty = document.getElementById('scanEmpty');
+
+  if (!scans.length) {
+    empty.style.display = 'flex';
+    list.querySelectorAll('.scan-item').forEach(el => el.remove());
+    return;
+  }
+  empty.style.display = 'none';
+
+  let html = '';
+  for (const s of scans) {
+    const title = s.book?.title || s.barcode;
+    const author = s.book?.authors || '';
+    const thumb = s.book?.thumbnail || '';
+    const isbn = s.book?.isbn13 || s.book?.isbn10 || s.barcode;
+
+    let priceHtml = '<div class="ebay-price unknown">—</div><div class="ebay-label">loading</div>';
+    if (s.ebay) {
+      const col = s.ebay.verdict === 'buy' ? 'var(--green)' : s.ebay.verdict === 'maybe' ? 'var(--yellow)' : 'var(--muted)';
+      const src = s.ebay.source === 'ebay-api' ? 'eBay actual' : 'estimate';
+      priceHtml = `<div class="ebay-price" style="color:${col}">$${s.ebay.estimatedPrice}</div><div class="ebay-label">${src}</div>`;
+    } else if (s.status === 'not-found') {
+      priceHtml = '<div class="ebay-price unknown">?</div><div class="ebay-label">unknown</div>';
+    }
+
+    let statusClass = 'status-loading';
+    let statusText = 'Looking up...';
+    if (s.status === 'found') { statusClass = 'status-found'; statusText = 'Found'; }
+    if (s.status === 'not-found') { statusClass = 'status-not-found'; statusText = 'Not found'; }
+
+    const thumbHtml = thumb
+      ? `<img class="scan-item-thumb" src="${thumb}" alt="" loading="lazy" />`
+      : `<div class="scan-item-thumb" style="display:flex;align-items:center;justify-content:center;font-size:1.2rem;opacity:0.3;">📖</div>`;
+
+    html += `
+      <div class="scan-item" data-barcode="${s.barcode}" data-id="${s.id}">
+        ${thumbHtml}
+        <div class="scan-item-info">
+          <div class="scan-item-title">${esc(title)}</div>
+          ${author ? `<div class="scan-item-author">${esc(author)}</div>` : ''}
+          <div class="scan-item-meta">
+            <span class="scan-item-isbn">${isbn.slice(-10)}</span>
+            <span class="scan-item-status ${statusClass}">${statusText}</span>
+          </div>
+        </div>
+        <div class="scan-item-right">
+          ${priceHtml}
+          <button class="delete-item" onclick="event.stopPropagation();deleteScan('${s.id}')">✕</button>
+        </div>
+      </div>`;
+  }
+
+  list.querySelectorAll('.scan-item').forEach(el => el.remove());
+  list.insertAdjacentHTML('beforeend', html);
+}
+
+// ================================================================
+// RENDER — EVALUATE LIST
+// ================================================================
+function renderEvalList() {
+  const list = document.getElementById('evalList');
+  const thriftCost = getThriftCost();
+
+  // Recalculate heuristic estimates (but don't overwrite real eBay API data)
+  scans.forEach(s => {
+    if (s.status === 'found' && s.book && s.ebay?.source !== 'ebay-api') estimateEbayPrice(s);
+  });
+
+  let items = scans.filter(s => s.status === 'found' && s.ebay);
+  if (activeFilter === 'buy') items = items.filter(s => s.ebay.verdict === 'buy');
+
+  const sortBy = document.getElementById('evalSort').value;
+  switch (sortBy) {
+    case 'profit-desc': items.sort((a, b) => b.ebay.profit - a.ebay.profit); break;
+    case 'profit-asc':  items.sort((a, b) => a.ebay.profit - b.ebay.profit); break;
+    case 'price-desc':  items.sort((a, b) => b.ebay.estimatedPrice - a.ebay.estimatedPrice); break;
+    case 'newest':      items.sort((a, b) => b.timestamp - a.timestamp); break;
+  }
+
+  if (!items.length) {
+    list.innerHTML = `
+      <div class="scan-list-empty" style="height:100%;">
+        <span class="big-icon">💰</span>
+        <h3>Nothing to Evaluate Yet</h3>
+        <p>${scans.length ? 'Waiting for lookups...' : 'Scan barcodes first, then come here.'}</p>
+      </div>`;
+    return;
+  }
+
+  let html = '';
+  for (const s of items) {
+    const b = s.book;
+    const e = s.ebay;
+
+    const thumb = b.thumbnail
+      ? `<img class="eval-thumb" src="${b.thumbnail}" alt="" loading="lazy" />`
+      : `<div class="eval-thumb" style="display:flex;align-items:center;justify-content:center;font-size:1.5rem;opacity:0.3;">📖</div>`;
+
+    const emoji = { buy: '✅', pass: '🚫', maybe: '🤔' }[e.verdict] || '❓';
+    const profitColor = e.profit > 0 ? 'var(--green)' : e.profit < 0 ? 'var(--red)' : 'var(--yellow)';
+    const profitSign = e.profit > 0 ? '+' : '';
+
+    const chips = [];
+    if (b.categories?.length) chips.push(b.categories[0]);
+    if (b.publishedDate) chips.push(b.publishedDate.slice(0, 4));
+    if (b.pageCount) chips.push(b.pageCount + 'pg');
+    e.signals.forEach(sig => chips.push(sig));
+
+    const isbn = b.isbn13 || b.isbn10 || s.barcode;
+    const ebayUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(b.title + ' ' + (b.authors || '').split(',')[0])}&LH_Sold=1&LH_Complete=1&_sacat=267`;
+
+    html += `
+      <div class="eval-card">
+        <div class="eval-card-top">
+          ${thumb}
+          <div class="eval-info">
+            <div class="eval-title">${esc(b.title)}</div>
+            ${b.authors ? `<div class="eval-author">${esc(b.authors)}</div>` : ''}
+            <div class="eval-detail-row">
+              ${chips.slice(0, 4).map(c => `<span class="eval-chip">${esc(c)}</span>`).join('')}
+            </div>
+          </div>
+        </div>
+
+        <div class="eval-verdict ${e.verdict}">
+          <div class="verdict-emoji">${emoji}</div>
+          <div class="verdict-text">
+            <div class="verdict-word ${e.verdict}">${e.verdict.toUpperCase()}</div>
+            <div class="verdict-sub">${e.confidence} confidence${e.source === 'ebay-api' ? ' · eBay data' : ' · estimate'} · ${isbn.slice(-10)}</div>
+          </div>
+          <div class="eval-profit">
+            <div class="eval-profit-num" style="color:${profitColor}">${profitSign}$${e.profit.toFixed(2)}</div>
+            <div class="eval-profit-label">Profit</div>
+          </div>
+        </div>
+
+        <div class="eval-pricing">
+          <div class="eval-price-box">
+            <div class="eval-price-label">eBay Price</div>
+            <div class="eval-price-value" style="color:var(--green)">$${e.estimatedPrice}</div>
+            <div class="eval-price-sub">$${e.low}–$${e.high}</div>
+          </div>
+          <div class="eval-price-box">
+            <div class="eval-price-label">Fees + Ship</div>
+            <div class="eval-price-value" style="color:var(--red);font-size:1rem;">-$${(e.fees + e.shipping).toFixed(2)}</div>
+            <div class="eval-price-sub">13.25% + $${e.shipping} ship</div>
+          </div>
+          <div class="eval-price-box">
+            <div class="eval-price-label">Your Cost</div>
+            <div class="eval-price-value">$${thriftCost.toFixed(2)}</div>
+            <div class="eval-price-sub">Thrift price</div>
+          </div>
+        </div>
+
+        <div class="eval-actions">
+          <a class="eval-action-btn primary" href="${ebayUrl}" target="_blank" rel="noopener">🔍 eBay Sold</a>
+          <button class="eval-action-btn" onclick="aiAnalysis('${s.id}', this)">🤖 AI</button>
+          <button class="eval-action-btn" onclick="copyListing('${s.id}', this)">📋 Copy</button>
+        </div>
+      </div>`;
+  }
+
+  list.innerHTML = html;
+}
+
+function toggleFilter(f) {
+  const el = document.getElementById('filterBuy');
+  activeFilter = activeFilter === f ? null : f;
+  el.classList.toggle('active', activeFilter === f);
+  renderEvalList();
+}
+
+// ================================================================
+// ACTIONS
+// ================================================================
+function copyListing(id, btn) {
+  const s = scans.find(x => x.id === id);
+  if (!s?.book) return;
+  const b = s.book;
+  const text = `${b.title}${b.subtitle ? ': ' + b.subtitle : ''} by ${b.authors}` +
+    (b.isbn13 ? ` | ISBN: ${b.isbn13}` : '');
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied';
+    setTimeout(() => btn.textContent = orig, 1200);
+  });
+}
+
+async function aiAnalysis(id, btn) {
+  const s = scans.find(x => x.id === id);
+  if (!s?.book) return;
+
+  const prompt = `You are an eBay book resale expert. Analyze this for eBay resale:
+
+Title: ${s.book.title}
+Author: ${s.book.authors}
+ISBN: ${s.book.isbn13 || s.book.isbn10 || 'N/A'}
+Category: ${(s.book.categories || []).join(', ')}
+Published: ${s.book.publishedDate}
+List Price: ${s.book.listPrice ? '$' + s.book.listPrice : 'Unknown'}
+
+Buying at thrift for ~$${s.ebay?.thriftCost || 3}, selling on eBay.
+
+Give 3-4 sentences: realistic eBay sold price range, how fast it sells, edition/condition notes to check, and verdict. Be direct.`;
+
+  btn.textContent = '⏳...';
+  btn.style.pointerEvents = 'none';
+
+  try {
+    const res = await fetch('/api/ai-analysis', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Server error ${res.status}`);
+    }
+
+    const data = await res.json();
+    const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+
+    const card = btn.closest('.eval-card');
+    const existing = card.querySelector('.ai-result');
+    if (existing) existing.remove();
+
+    card.insertAdjacentHTML('beforeend', `
+      <div class="ai-result" style="margin-top:10px;padding:12px;background:var(--bg);border:1px solid rgba(200,255,0,0.2);border-radius:8px;">
+        <div style="font-family:'DM Mono',monospace;font-size:0.55rem;letter-spacing:2px;color:var(--accent);margin-bottom:6px;">🤖 AI ANALYSIS</div>
+        <div style="font-size:0.78rem;line-height:1.7;color:#ccc;">${esc(text)}</div>
+      </div>`);
+
+    btn.textContent = '🤖 AI';
+    btn.style.pointerEvents = '';
+  } catch (err) {
+    btn.textContent = '❌';
+    btn.style.pointerEvents = '';
+    setTimeout(() => btn.textContent = '🤖 AI', 2000);
+    if (err.message.includes('not configured')) {
+      alert('AI analysis not available — Anthropic key not set on server.');
+    }
+  }
+}
+
+// ================================================================
+// UTILS
+// ================================================================
+function getThriftCost() {
+  return parseFloat(document.getElementById('avgThriftPrice').value) || 3;
+}
+function getMinProfit() {
+  return parseFloat(document.getElementById('minProfit').value) || 5;
+}
+
+function saveScans() {
+  try { localStorage.setItem('ts_scans', JSON.stringify(scans)); } catch(e) {}
+}
+
+function deleteScan(id) {
+  scans = scans.filter(s => s.id !== id);
+  saveScans();
+  renderScanList();
+  updateCounts();
+}
+
+function clearAllScans() {
+  if (confirm('Clear all scans?')) {
+    scans = [];
+    saveScans();
+    renderScanList();
+    updateCounts();
+  }
+}
+
+function updateCounts() {
+  const count = scans.length;
+  const found = scans.filter(s => s.status === 'found').length;
+  const buys = scans.filter(s => s.ebay?.verdict === 'buy').length;
+
+  document.getElementById('scanCount').textContent = count + ' scan' + (count !== 1 ? 's' : '');
+
+  const badge = document.getElementById('evalBadge');
+  if (found > 0) { badge.style.display = ''; badge.textContent = found; }
+  else { badge.style.display = 'none'; }
+
+  let stat = `${count} scanned`;
+  if (found) stat += ` · ${found} found`;
+  if (buys) stat += ` · <strong>${buys} worth buying</strong>`;
+  document.getElementById('bottomStat').innerHTML = stat || 'Ready to scan';
+}
+
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = str || '';
+  return d.innerHTML;
+}
+
+// Persist settings to localStorage on change
+document.getElementById('minProfit').addEventListener('change', () => {
+  localStorage.setItem('ts_min_profit', document.getElementById('minProfit').value);
+});
+document.getElementById('avgThriftPrice').addEventListener('change', () => {
+  localStorage.setItem('ts_thrift_price', document.getElementById('avgThriftPrice').value);
+});
+
+// ================================================================
+// INIT
+// ================================================================
+if (savedMinProfit) document.getElementById('minProfit').value = savedMinProfit;
+if (savedThriftPrice) document.getElementById('avgThriftPrice').value = savedThriftPrice;
+
+renderScanList();
+updateCounts();
+document.getElementById('barcodeInput').focus();
+
+document.querySelector('.scan-input-area').addEventListener('click', (e) => {
+  if (!e.target.matches('input, button')) document.getElementById('barcodeInput').focus();
+});
+
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+if (!isMobile) {
+  setInterval(() => {
+    if (!document.getElementById('panelScan').classList.contains('active')) return;
+    if (!document.activeElement?.matches('input, select, button, a')) {
+      document.getElementById('barcodeInput').focus();
+    }
+  }, 1500);
+}
+</script>
+</body>
+</html>

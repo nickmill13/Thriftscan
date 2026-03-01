@@ -6,16 +6,16 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ================================================================
-// eBay OAuth token cache — used only for Browse API fallback
+// eBay OAuth token cache — keyed by scope
 // ================================================================
-let ebayToken = null;
+const ebayTokens = {};
 
-async function getEbayToken() {
+async function getEbayToken(scope) {
   if (!process.env.EBAY_CLIENT_ID || !process.env.EBAY_CLIENT_SECRET) {
     throw new Error('eBay credentials not configured');
   }
-  if (ebayToken && ebayToken.expires_at > Date.now() + 60_000) {
-    return ebayToken.access_token;
+  if (ebayTokens[scope] && ebayTokens[scope].expires_at > Date.now() + 60_000) {
+    return ebayTokens[scope].access_token;
   }
   const creds = Buffer.from(
     `${process.env.EBAY_CLIENT_ID}:${process.env.EBAY_CLIENT_SECRET}`
@@ -26,19 +26,22 @@ async function getEbayToken() {
       'Content-Type': 'application/x-www-form-urlencoded',
       Authorization: 'Basic ' + creds,
     },
-    body: 'grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope',
+    body: `grant_type=client_credentials&scope=${encodeURIComponent(scope)}`,
   });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`eBay OAuth failed (${res.status}): ${text}`);
   }
   const data = await res.json();
-  ebayToken = {
+  ebayTokens[scope] = {
     access_token: data.access_token,
     expires_at: Date.now() + data.expires_in * 1000,
   };
-  return ebayToken.access_token;
+  return ebayTokens[scope].access_token;
 }
+
+const SCOPE_BROWSE   = 'https://api.ebay.com/oauth/api_scope';
+const SCOPE_INSIGHTS = 'https://api.ebay.com/oauth/api_scope/buy.marketplace.insights';
 
 // ================================================================
 // POST /api/lookup — Google Books + Open Library for specific titles
@@ -58,8 +61,6 @@ app.post('/api/lookup', async (req, res) => {
       ).then((r) => r.json());
     }
 
-    // Supplement with Open Library when Google Books has no subtitle
-    // (e.g. returns "The Walking Dead" instead of "The Walking Dead, Vol. 27")
     if (data.totalItems > 0) {
       const vol = data.items[0].volumeInfo;
       const isIsbn13 = /^97[89]\d{10}$/.test(barcode);
@@ -75,9 +76,7 @@ app.post('/api/lookup', async (req, res) => {
             if (olBook.title.length > vol.title.length) vol.title = olBook.title;
             if (olBook.subtitle) vol.subtitle = olBook.subtitle;
           }
-        } catch (e) {
-          // Silent — Google Books data is still usable
-        }
+        } catch (e) { /* silent */ }
       }
 
       console.log('Final title:', vol.title, '|', vol.subtitle || '(no subtitle)');
@@ -92,88 +91,62 @@ app.post('/api/lookup', async (req, res) => {
 
 // ================================================================
 // POST /api/ebay-price
-//   Primary:  eBay Finding API — findCompletedItems (actual sold prices)
-//   Fallback: eBay Browse API  — active listings (asking prices)
+//   1. Marketplace Insights API — sold listings (modern, preferred)
+//   2. Browse API               — active listings, outliers trimmed (fallback)
 // ================================================================
 app.post('/api/ebay-price', async (req, res) => {
   const { query } = req.body;
   if (!query) return res.status(400).json({ error: 'query required' });
 
-  const appId = process.env.EBAY_CLIENT_ID;
-  if (!appId) return res.status(503).json({ error: 'eBay not configured on server' });
-
-  console.log('eBay sold search:', query);
-
-  // ── Finding API (sold listings) ──────────────────────────────────────────
-  try {
-    const params = new URLSearchParams([
-      ['OPERATION-NAME',          'findCompletedItems'],
-      ['SERVICE-VERSION',         '1.0.0'],
-      ['SECURITY-APPNAME',        appId],
-      ['RESPONSE-DATA-FORMAT',    'JSON'],
-      ['keywords',                query],
-      ['categoryId',              '267'],
-      ['itemFilter(0).name',      'SoldItemsOnly'],
-      ['itemFilter(0).value',     'true'],
-      ['itemFilter(1).name',      'MinPrice'],
-      ['itemFilter(1).value',     '0.50'],
-      ['itemFilter(1).paramName', 'Currency'],
-      ['itemFilter(1).paramValue','USD'],
-      ['itemFilter(2).name',      'MaxPrice'],
-      ['itemFilter(2).value',     '150'],
-      ['itemFilter(2).paramName', 'Currency'],
-      ['itemFilter(2).paramValue','USD'],
-      ['paginationInput.entriesPerPage', '20'],
-      ['sortOrder',               'EndTimeSoonest'],
-    ]);
-
-    const r = await fetch(
-      `https://svcs.ebay.com/services/search/FindingService/v1?${params}`
-    );
-    if (!r.ok) {
-      const errBody = await r.text();
-      console.error('Finding API error body:', errBody.slice(0, 800));
-      throw new Error(`Finding API HTTP ${r.status}`);
-    }
-
-    const data = await r.json();
-    const ack = data.findCompletedItemsResponse?.[0]?.ack?.[0];
-    if (ack !== 'Success' && ack !== 'Warning') throw new Error(`Finding API ack: ${ack}`);
-
-    const items = data.findCompletedItemsResponse?.[0]?.searchResult?.[0]?.item || [];
-
-    // Filter out new condition (conditionId 1000) — we only want used sold prices
-    const usedItems = items.filter(item => {
-      const conditionId = item.condition?.[0]?.conditionId?.[0];
-      return conditionId !== '1000';
-    });
-
-    // Normalize to the same shape the frontend already handles
-    const summaries = usedItems
-      .map(item => ({
-        title: item.title?.[0] || '',
-        price: {
-          value: item.sellingStatus?.[0]?.convertedCurrentPrice?.[0]?.__value__ || '0',
-          currency: 'USD',
-        },
-      }))
-      .filter(item => parseFloat(item.price.value) >= 0.50);
-
-    console.log(`Sold used (${summaries.length}):`, summaries.map(i => i.price.value));
-
-    return res.json({ source: 'sold', itemSummaries: summaries });
-  } catch (err) {
-    console.warn('Finding API failed, falling back to Browse API:', err.message);
+  if (!process.env.EBAY_CLIENT_ID) {
+    return res.status(503).json({ error: 'eBay not configured on server' });
   }
 
-  // ── Browse API fallback (active listings) ───────────────────────────────
+  console.log('eBay price lookup:', query);
+
+  // ── 1. Marketplace Insights (sold listings) ──────────────────────────────
   try {
-    const token = await getEbayToken();
+    const token = await getEbayToken(SCOPE_INSIGHTS);
 
     const params = new URLSearchParams({
       q: query,
       category_ids: '267',
-      filter: 'price:[0.50..150],priceCurrency:USD,conditions:{USED|VERY_GOOD|GOOD|ACCEPTABLE|LIKE_NEW},buyingOptions:{FIXED_PRICE|AUCTION}',
+      filter: 'conditions:{USED|VERY_GOOD|GOOD|ACCEPTABLE|LIKE_NEW},price:[0.50..100],priceCurrency:USD',
+      sort: '-lastSoldDate',
+      limit: '20',
+    });
+
+    const r = await fetch(
+      `https://api.ebay.com/buy/marketplace_insights/v1_beta/item_summary/search?${params}`,
+      { headers: { Authorization: 'Bearer ' + token, 'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US' } }
+    );
+
+    if (!r.ok) {
+      const errText = await r.text();
+      throw new Error(`Insights API ${r.status}: ${errText.slice(0, 200)}`);
+    }
+
+    const data = await r.json();
+    const items = data.itemSummaries || [];
+    console.log(`Insights sold (${items.length}):`, items.map(i => i.price?.value));
+
+    if (items.length > 0) {
+      data.source = 'sold';
+      return res.json(data);
+    }
+    throw new Error('Insights API returned 0 results');
+  } catch (err) {
+    console.warn('Insights API failed, falling back to Browse:', err.message);
+  }
+
+  // ── 2. Browse API fallback (active listings, outliers trimmed) ───────────
+  try {
+    const token = await getEbayToken(SCOPE_BROWSE);
+
+    const params = new URLSearchParams({
+      q: query,
+      category_ids: '267',
+      filter: 'price:[0.50..100],priceCurrency:USD,conditions:{USED|VERY_GOOD|GOOD|ACCEPTABLE|LIKE_NEW},buyingOptions:{FIXED_PRICE|AUCTION}',
       limit: '20',
     });
 
@@ -184,15 +157,25 @@ app.post('/api/ebay-price', async (req, res) => {
     if (!r.ok) throw new Error(`Browse API ${r.status}`);
 
     const data = await r.json();
+
+    // Trim top 25% by price to remove expensive outliers (hardcovers, new copies
+    // that slipped through, etc.) — leaves the realistic used paperback range
+    const sorted = (data.itemSummaries || [])
+      .filter(i => parseFloat(i.price?.value || 0) > 0)
+      .sort((a, b) => parseFloat(a.price.value) - parseFloat(b.price.value));
+    const trimCount = Math.ceil(sorted.length * 0.25);
+    data.itemSummaries = sorted.slice(0, sorted.length - trimCount);
     data.source = 'active';
 
-    console.log('Active prices:', (data.itemSummaries || []).map(i => i.price?.value));
+    console.log(`Browse active trimmed (${data.itemSummaries.length}):`,
+      data.itemSummaries.map(i => i.price?.value));
+
     return res.json(data);
   } catch (err) {
     if (err.message.includes('not configured')) {
       return res.status(503).json({ error: 'eBay not configured on server' });
     }
-    console.error('Browse API also failed:', err.message);
+    console.error('Browse API failed:', err.message);
     res.status(502).json({ error: 'eBay lookup failed', message: err.message });
   }
 });

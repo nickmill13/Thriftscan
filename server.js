@@ -123,6 +123,14 @@ app.post('/api/ebay-price', async (req, res) => {
       ['itemFilter(2).value',     '150'],
       ['itemFilter(2).paramName', 'Currency'],
       ['itemFilter(2).paramValue','USD'],
+      // Exclude new condition (1000) — used condition IDs: 2500 Like New, 2750 Very Good,
+      // 3000 Good, 4000 Acceptable, 7000 Poor
+      ['itemFilter(3).name',         'Condition'],
+      ['itemFilter(3).value(0)',      '2500'],
+      ['itemFilter(3).value(1)',      '2750'],
+      ['itemFilter(3).value(2)',      '3000'],
+      ['itemFilter(3).value(3)',      '4000'],
+      ['itemFilter(3).value(4)',      '7000'],
       ['paginationInput.entriesPerPage', '20'],
       ['sortOrder',               'EndTimeSoonest'],
     ]);

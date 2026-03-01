@@ -113,6 +113,7 @@ app.post('/api/ebay-price', async (req, res) => {
         data = await searchEbay(token, { q: query, filter: CONDITIONS });
       } else {
         console.log(`GTIN hit: ${data.itemSummaries.length} results`);
+        console.log('GTIN prices:', data.itemSummaries.map(i => `${i.price?.value} ${i.price?.currency} | ${i.title?.slice(0,50)}`));
       }
     } else {
       // 2. No ISBN — keyword search
